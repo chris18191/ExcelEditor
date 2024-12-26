@@ -419,7 +419,7 @@ func main() {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(debug_file, nil)))
 	slog.SetLogLoggerLevel(slog.LevelInfo)
-	slog.Info("Starting Stundenzettel-Helfer...")
+	slog.Info("Starting Excel-Editor...")
 
 	var resultChan = make(chan tea.Model)
 	l := NewLoadingScreen(resultChan)
