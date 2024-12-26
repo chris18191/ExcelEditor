@@ -1,4 +1,4 @@
-module github.com:chris18191/exceleditor
+module github.com/chris18191/exceleditor
 
 go 1.23.4
 
