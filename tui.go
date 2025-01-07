@@ -19,14 +19,14 @@ import (
 )
 
 var defaultConfig = Configuration{
-	EXCEL_FILE:         "res/example.xlsx",
+	EXCEL_FILE:         "res/test.xlsx",
 	COL_ID_DATE:        0,
 	COL_ID_HOURS_START: 2,
 	COL_ID_HOURS_END:   3,
 	COL_ID_HOURS_PAUSE: 4,
-	ROW_ID_ENTRY_START: 5, // sixth row contains first entries
+	ROW_ID_ENTRY_START: 6, // sixth row contains first entries
+	OutputFile:         "./res/result.xlsx",
 }
-
 
 type EntryList struct {
 	Entries [][][]RowEntry
@@ -149,7 +149,6 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
-
 func validateTime(s string) error {
 	_, err := time.Parse("15:04", string(s))
 	return err
@@ -168,7 +167,6 @@ func readTextInputWithDefault(i *textinput.Model) string {
 	if i.Value() != "" {
 		return i.Value()
 	}
-
 	return i.Placeholder
 }
 
@@ -197,6 +195,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, keys.Save) && !m.editActive:
 			m.debugMessage = "Pressed save"
+			var sheets = make(map[string][][]RowEntry)
+			for _, month := range m.entryList.Entries {
+				if len(month) > 0 {
+					if len(month[0]) > 0 {
+						sheets[month[0][0].SheetName] = month
+					} else if len(month[2]) > 0 {
+						sheets[month[2][0].SheetName] = month
+					}
+				}
+			}
+			WriteRowEntries(sheets, defaultConfig)
 		case key.Matches(msg, keys.FocusPrev) && !m.editActive:
 			if !m.editActive {
 				break
@@ -226,6 +235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			*todaysEntries = append(*todaysEntries,
 				RowEntry{
 					Date:      (*todaysEntries)[len(*todaysEntries)-1].Date,
+					Day:       (*todaysEntries)[len(*todaysEntries)-1].Day,
 					SheetName: (*todaysEntries)[len(*todaysEntries)-1].SheetName,
 					Start:     (*todaysEntries)[len(*todaysEntries)-1].End,
 				})
@@ -379,7 +389,9 @@ func (m Model) View() string {
 
 	indent := "  "
 	todaysEntries := *m.getCurrentDayEntries()
-	if len(todaysEntries) > 0 {
+	if len(todaysEntries) <= 0 {
+
+	} else {
 		for i := 0; i < m.currentSelectedRow; i++ {
 			s += indent
 			s += m.styles["unselectedEntry"].Render(todaysEntries[i].View()) + "\n"
