@@ -326,7 +326,9 @@ func WriteRowEntries(entries map[string][][]RowEntry, config Configuration) {
 			newFormula := strings.ReplaceAll(formula, fmt.Sprintf("%02d!", sheetNum), fmt.Sprintf("$'%02d'.", sheetNum))
 			newFormula = newFormula[:len(newFormula)-1]
 			f.SetCellValue("Gesamt", cell, "")
-			f.SetCellFormula("Gesamt", cell, newFormula, excelize.FormulaOpts{})
+			f.SetCellFormula("Gesamt", cell, newFormula)
+			res, _ := f.GetCellFormula("Gesamt", cell)
+			slog.Info("Wrote formula", "cell", cell, "old", formula, "new", res)
 			f.UpdateLinkedValue()
 		}
 	}
