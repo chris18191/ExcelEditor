@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -10,7 +11,7 @@ func TestRead(t *testing.T) {
 	EXCEL_FILE := "./res/test.xlsx"
 	t.Log("Trying to read file: ", EXCEL_FILE)
 
-	var testConfig = defaultConfig
+	var testConfig = debugConfig
 	testConfig.EXCEL_FILE = EXCEL_FILE
 
 	res := ReturnAll(testConfig)
@@ -24,8 +25,9 @@ func TestWriteFile(t *testing.T) {
 	EXCEL_FILE := "./res/test.xlsx"
 	t.Log("Trying to read file: ", EXCEL_FILE)
 
-	var testConfig = defaultConfig
+	var testConfig = debugConfig
 	testConfig.EXCEL_FILE = EXCEL_FILE
+	testConfig.OutputFile = "./res/result.xlsx"
 
 	res := ReturnAll(testConfig)
 	var sheets = make(map[string][][]RowEntry)
@@ -41,6 +43,7 @@ func TestWriteFile(t *testing.T) {
 
 	sheets_new := make(map[string][][]RowEntry)
 	sheets_new["01"] = sheets["01"]
+	sheets_new["02"] = sheets["02"]
 	sheets = sheets_new
 	date, err := time.Parse("02/01/2006", "04/01/2025")
 	if err != nil {
@@ -62,4 +65,41 @@ func TestWriteFile(t *testing.T) {
 	WriteRowEntries(sheets, testConfig)
 
 	return
+}
+
+func TestWriteIdenticalFile(t *testing.T) {
+	EXCEL_FILE := "./res/test_full.xlsx"
+	t.Log("Trying to read file: ", EXCEL_FILE)
+
+	var testConfig = debugConfig
+	testConfig.EXCEL_FILE = EXCEL_FILE
+	testConfig.OutputFile = "./res/result_id.xlsx"
+
+	res := ReturnAll(testConfig)
+	var sheets = make(map[string][][]RowEntry)
+	for _, month := range res {
+		if len(month) > 0 {
+			if len(month[0]) > 0 {
+				sheets[month[0][0].SheetName] = month
+			} else if len(month[2]) > 0 {
+				sheets[month[2][0].SheetName] = month
+			}
+		}
+	}
+
+	WriteRowEntries(sheets, testConfig)
+
+	return
+}
+
+func TestGetProjectNumbers(t *testing.T) {
+	EXCEL_FILE := "./res/test.xlsx"
+	t.Log("Trying to read file: ", EXCEL_FILE)
+
+	var testConfig = debugConfig
+	testConfig.EXCEL_FILE = EXCEL_FILE
+	testConfig.OutputFile = "./res/result_id.xlsx"
+
+	res, _, _ := GetProjectNumbers(testConfig)
+	fmt.Println("Read project numbers:\n", res)
 }

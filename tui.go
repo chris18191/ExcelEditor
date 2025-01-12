@@ -2,9 +2,7 @@ package main
 
 import (
 	"fmt"
-	"io"
-	"log/slog"
-	"math"
+	"maps"
 	"os"
 	"strings"
 	"time"
@@ -18,23 +16,26 @@ import (
 	tint "github.com/lrstanley/bubbletint"
 )
 
-var defaultConfig = Configuration{
-	EXCEL_FILE:         "res/test.xlsx",
-	COL_ID_DATE:        0,
-	COL_ID_HOURS_START: 2,
-	COL_ID_HOURS_END:   3,
-	COL_ID_HOURS_PAUSE: 4,
-	ROW_ID_ENTRY_START: 6, // sixth row contains first entries
-	OutputFile:         "./res/result.xlsx",
+var WEEKDAYS = []string{"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"}
+
+var debugConfig = Configuration{
+	EXCEL_FILE:          "res/test.xlsx",
+	COL_ID_DATE:         0,
+	COL_ID_HOURS_START:  2,
+	COL_ID_HOURS_END:    3,
+	COL_ID_HOURS_PAUSE:  4,
+	ROW_ID_ENTRY_START:  6, // sixth row contains first entries
+	OutputFile:          "./res/result.xlsx",
+	ProjectNumbersSheet: "Projektnummern",
 }
 
 type EntryList struct {
 	Entries [][][]RowEntry
 }
 
-func NewEntryList() EntryList {
+func NewEntryList(config Configuration) EntryList {
 	return EntryList{
-		Entries: ReturnAll(defaultConfig),
+		Entries: ReturnAll(config),
 	}
 }
 
@@ -51,11 +52,15 @@ func NewDatePicker() DatePicker {
 }
 
 type Model struct {
-	numColumns   int // equals the number of columns that are printed for each row
-	spinner      spinner.Model
-	datepicker   DatePicker
-	entryList    EntryList
-	debugMessage string
+	config           Configuration
+	numColumns       int // equals the number of columns that are printed for each row
+	spinner          spinner.Model
+	datepicker       DatePicker
+	entryList        EntryList
+	debugMessage     string
+	projectNames     map[string]Project
+	projectNumbers   map[string]Project
+	projectCustomers map[string]Project
 
 	keys               keyMap
 	help               help.Model
@@ -68,9 +73,14 @@ type Model struct {
 	styles map[string]lipgloss.Style
 	height int
 	width  int
+
+	projectNumberIndex        int
+	projectNumberVisible      int
+	potentialProjects         []Project
+	lastProjectNumberSearched string
 }
 
-func initialModel() Model {
+func initialModel(config Configuration) Model {
 
 	help := help.New()
 	// help.Styles.FullDesc = help.Styles.FullDesc.Background(tint.Bg())
@@ -81,9 +91,17 @@ func initialModel() Model {
 	// help.Styles.ShortSeparator = help.Styles.ShortSeparator.Background(tint.Bg())
 	// help.Styles.Ellipsis = help.Styles.Ellipsis.Background(tint.Bg())
 
+	nr, name, custom := GetProjectNumbers(config)
+
 	return Model{
-		datepicker:   NewDatePicker(),
-		entryList:    NewEntryList(),
+		datepicker: NewDatePicker(),
+		entryList:  NewEntryList(config),
+		config:     config,
+
+		projectNumbers:   nr,
+		projectNames:     name,
+		projectCustomers: custom,
+
 		debugMessage: "",
 
 		keys:               keys,
@@ -97,6 +115,9 @@ func initialModel() Model {
 
 		height: 50,
 		width:  100,
+
+		projectNumberIndex:   0,
+		projectNumberVisible: 5,
 
 		styles: map[string]lipgloss.Style{
 			"header": lipgloss.NewStyle().
@@ -160,7 +181,7 @@ func validateDuration(s string) error {
 }
 
 func helperMod(a, b int) int {
-	return (a%b + b) % b
+	return (a + b) % b
 }
 
 func readTextInputWithDefault(i *textinput.Model) string {
@@ -170,17 +191,40 @@ func readTextInputWithDefault(i *textinput.Model) string {
 	return i.Placeholder
 }
 
+func trySettingCurrentSelectedProjectNr(m *Model) {
+	if m.focusedIndex == 4 {
+		if m.projectNumberIndex < len(m.potentialProjects) {
+			m.textInputs[4].SetValue(m.potentialProjects[m.projectNumberIndex].ID)
+			m.potentialProjects = []Project{m.potentialProjects[m.projectNumberIndex]}
+		} else {
+			m.potentialProjects = []Project{}
+		}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, keys.PrevDay) && !m.editActive:
 			m.datepicker.currentDay = m.datepicker.currentDay.AddDate(0, 0, -1)
-			m.currentSelectedRow = int(math.Min(float64(m.currentSelectedRow), float64(len(*m.getCurrentDayEntries())-1)))
+			if m.currentSelectedRow >= len(*m.getCurrentDayEntries()) {
+				m.currentSelectedRow -= 1
+			}
+			if m.currentSelectedRow < 0 {
+				m.currentSelectedRow = 0
+			}
+			// m.currentSelectedRow = int(math.Min(float64(m.currentSelectedRow), float64(len(*m.getCurrentDayEntries())-1)))
 			// m.entryList.UpdateCurrentIndex(m.datepicker.currentDay)
 		case key.Matches(msg, keys.NextDay) && !m.editActive:
 			m.datepicker.currentDay = m.datepicker.currentDay.AddDate(0, 0, 1)
-			m.currentSelectedRow = int(math.Min(float64(m.currentSelectedRow), float64(len(*m.getCurrentDayEntries())-1)))
+			if m.currentSelectedRow >= len(*m.getCurrentDayEntries()) {
+				m.currentSelectedRow -= 1
+			}
+			if m.currentSelectedRow < 0 {
+				m.currentSelectedRow = 0
+			}
+			// m.currentSelectedRow = int(math.Min(float64(m.currentSelectedRow), float64(len(*m.getCurrentDayEntries())-1)))
 			// m.entryList.UpdateCurrentIndex(m.datepicker.currentDay)
 		case key.Matches(msg, keys.Up) && !m.editActive:
 			m.currentSelectedRow = helperMod(m.currentSelectedRow-1, len(*m.getCurrentDayEntries()))
@@ -205,23 +249,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-			WriteRowEntries(sheets, defaultConfig)
-		case key.Matches(msg, keys.FocusPrev) && !m.editActive:
+			WriteRowEntries(sheets, m.config)
+		case key.Matches(msg, keys.FocusPrev):
 			if !m.editActive {
 				break
 			}
+			trySettingCurrentSelectedProjectNr(&m)
 			m.focusedIndex = helperMod(m.focusedIndex-1, len(m.textInputs))
 			m.debugMessage = fmt.Sprintf("Focused index: %d", m.focusedIndex)
 		case key.Matches(msg, keys.FocusNext):
 			if !m.editActive {
 				break
 			}
+			trySettingCurrentSelectedProjectNr(&m)
 			m.focusedIndex = helperMod(m.focusedIndex+1, len(m.textInputs))
 			m.debugMessage = fmt.Sprintf("Focused index: %d", m.focusedIndex)
 
 		case key.Matches(msg, keys.Delete) && !m.editActive && len(m.entryList.Entries) > 0:
 			m.debugMessage = "Trying to delete..."
 			todaysEntries := m.getCurrentDayEntries()
+			if len(*todaysEntries) == 0 {
+				m.debugMessage += " No entry!"
+				break
+			}
 			*todaysEntries = append((*todaysEntries)[0:m.currentSelectedRow], (*todaysEntries)[m.currentSelectedRow+1:]...)
 			if len(*todaysEntries) == 0 {
 				m.currentSelectedRow = 0
@@ -232,19 +282,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case key.Matches(msg, keys.Add) && !m.editActive:
 			todaysEntries := m.getCurrentDayEntries()
-			*todaysEntries = append(*todaysEntries,
-				RowEntry{
+			var newEntry RowEntry
+			if len(*todaysEntries) > 0 {
+				newEntry = RowEntry{
 					Date:      (*todaysEntries)[len(*todaysEntries)-1].Date,
 					Day:       (*todaysEntries)[len(*todaysEntries)-1].Day,
 					SheetName: (*todaysEntries)[len(*todaysEntries)-1].SheetName,
 					Start:     (*todaysEntries)[len(*todaysEntries)-1].End,
-				})
+				}
+			}
+			*todaysEntries = append(*todaysEntries, newEntry)
 			m.currentSelectedRow = len(*todaysEntries) - 1
 			fallthrough // automatically edit new entry
 		case key.Matches(msg, keys.Edit):
-			m.debugMessage = "Pressed edit"
+			m.debugMessage = "Pressed edit..."
+			todaysEntries := *m.getCurrentDayEntries()
+			if len(todaysEntries) == 0 {
+				m.debugMessage += "No entry!"
+				break
+			}
 			m.editActive = !m.editActive
-			entry := (*m.getCurrentDayEntries())[m.currentSelectedRow]
+			entry := (todaysEntries)[m.currentSelectedRow]
 			if m.editActive {
 				// create inputs for all columns except date
 				inputs := make([]textinput.Model, m.numColumns)
@@ -270,17 +328,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						t.Width = 9
 						t.Validate = validateDuration
 					case 3:
-						if t.Placeholder = entry.ProjectNr; t.Placeholder == "" {
-							t.Placeholder = "Project-Nr."
-						}
-						t.CharLimit = 9
-						t.Width = 9
-					case 4:
 						t.Placeholder = "Description"
 						t.SetValue(entry.Description)
 						// if t.Placeholder = entry.Description; t.Placeholder == "" {
 						// }
 						t.Width = 40
+					case 4:
+						if t.Placeholder = entry.ProjectNr; t.Placeholder == "" {
+							t.Placeholder = "Project-Nr."
+						}
+						t.CharLimit = 9
+						t.Width = 9
 					default:
 						t.Placeholder = "UNDEFINED FIELD"
 					}
@@ -291,16 +349,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.focusedIndex = 0
 			} else {
 				m.debugMessage = "Saved entry starting at " + m.textInputs[0].Value()
+				entry.Date = m.datepicker.currentDay
+				entry.Day = WEEKDAYS[int(entry.Date.Weekday())]
 				entry.Start, _ = time.Parse("15:04", readTextInputWithDefault(&m.textInputs[0]))
 				entry.End, _ = time.Parse("15:04", readTextInputWithDefault(&m.textInputs[1]))
 				entry.Pause, _ = time.ParseDuration(readTextInputWithDefault(&m.textInputs[2]))
-				entry.ProjectNr = readTextInputWithDefault(&m.textInputs[3])
-				// TODO write customer from project number
-
-				entry.Description = readTextInputWithDefault(&m.textInputs[4])
+				entry.Description = readTextInputWithDefault(&m.textInputs[3])
+				trySettingCurrentSelectedProjectNr(&m)
+				entry.ProjectNr = readTextInputWithDefault(&m.textInputs[4])
 			}
 			m.entryList.Entries[m.datepicker.currentDay.Month()-1][m.datepicker.currentDay.Day()-1][m.currentSelectedRow] = entry
 
+		case key.Matches(msg, keys.ArrowUp) && m.editActive && m.focusedIndex == 4:
+			m.projectNumberIndex = helperMod(m.projectNumberIndex-1, len(m.potentialProjects))
+			m.debugMessage = fmt.Sprintf("Arrow up. Project index %d/%d", m.projectNumberIndex, len(m.potentialProjects))
+		case key.Matches(msg, keys.ArrowDown) && m.editActive && m.focusedIndex == 4:
+			m.projectNumberIndex = helperMod(m.projectNumberIndex+1, len(m.potentialProjects))
+			m.debugMessage = fmt.Sprintf("Arrow down. Project index %d/%d", m.projectNumberIndex, len(m.potentialProjects))
 		case key.Matches(msg, keys.CancelEdit):
 			if m.editActive {
 				m.editActive = false
@@ -319,6 +384,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.debugMessage = fmt.Sprintf("Resized to %dx%d", m.width, m.height)
 
 	default:
+		if m.focusedIndex == 4 {
+
+			if m.lastProjectNumberSearched != m.textInputs[4].Value() {
+				m.lastProjectNumberSearched = m.textInputs[4].Value()
+				var potentialProjects []Project
+				for p := range maps.Values(m.projectNumbers) {
+					if len(potentialProjects) >= m.projectNumberVisible {
+						break
+					}
+					if strings.HasPrefix(p.ID, m.textInputs[4].Value()) {
+						potentialProjects = append(potentialProjects, p)
+					}
+					if strings.Contains(p.Name, m.textInputs[4].Value()) {
+						potentialProjects = append(potentialProjects, p)
+					}
+					if strings.Contains(p.Customer, m.textInputs[4].Value()) {
+						potentialProjects = append(potentialProjects, p)
+					}
+				}
+				m.potentialProjects = potentialProjects
+			}
+		}
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
@@ -355,7 +442,6 @@ func (r RowEntry) View() string {
 
 func (m *Model) ViewAsEdit() string {
 	s := ""
-	m.debugMessage = fmt.Sprintf("Creating edit view for %d inputs", len(m.textInputs))
 	for i := range m.textInputs {
 		res := ""
 		if m.focusedIndex == i {
@@ -369,15 +455,14 @@ func (m *Model) ViewAsEdit() string {
 			res = m.styles["inputField"].Render(m.textInputs[i].View()) + "\t"
 		}
 		s += res
-		// m.debugMessage += fmt.Sprintf("Focused %d", m.focusedIndex)
 	}
+
 	return m.styles["inputField"].Render(s)
 }
 
 func (m Model) View() string {
 	s := ""
 	s += m.styles["header"].Render("Work Hour Editor")
-	// s += strings.Repeat(" ", m.width+100) + "\n"
 	s += "\n"
 	s += fmt.Sprintf("Current Date: [%12s] \n", m.datepicker.currentDay.Format("Mon 02.01.06"))
 	s += fmt.Sprintf("\n")
@@ -398,11 +483,31 @@ func (m Model) View() string {
 		}
 		if m.editActive {
 			s += indent + strings.Repeat(" ", 12)
-			s += m.ViewAsEdit() + "\n"
-		} else {
-			s += indent
-			s += m.styles["selectedEntry"].Render(todaysEntries[m.currentSelectedRow].View()) + "\n"
+			inputRow := m.ViewAsEdit()
+			s += inputRow + "\n"
 
+			if m.focusedIndex == 4 && m.textInputs[4].Value() != "" {
+
+				indent := strings.Repeat(" ", 30)
+				s += "\n"
+
+				for i := 0; i < len(m.potentialProjects); i++ {
+					if i == m.projectNumberIndex {
+						s += m.styles["selectedEntry"].Render(fmt.Sprintf("%s%s%s: %15.15s [%15.15s]", indent, "◉", m.potentialProjects[i].ID, m.potentialProjects[i].Name, m.potentialProjects[i].Customer)) + "\n"
+					} else {
+						s += m.styles["selectedEntry"].Render(fmt.Sprintf("%s%s%s: %15.15s [%15.15s]", indent, "○", m.potentialProjects[i].ID, m.potentialProjects[i].Name, m.potentialProjects[i].Customer)) + "\n"
+					}
+				}
+
+			}
+
+		} else {
+			if m.currentSelectedRow >= len(todaysEntries) {
+				m.debugMessage = "Current row > entries length"
+			} else {
+				s += indent
+				s += m.styles["selectedEntry"].Render(todaysEntries[m.currentSelectedRow].View()) + "\n"
+			}
 		}
 		for i := m.currentSelectedRow + 1; i < len(todaysEntries); i++ {
 			s += indent
@@ -414,29 +519,18 @@ func (m Model) View() string {
 	s += "\n\n#######\nDebug: " + m.debugMessage + "\n#######\n\n"
 
 	s += m.help.View(m.keys)
-	// s += strings.Repeat("\n", m.height - strings.Count(s, "\n"))
 	return s
-	// return lipgloss.NewStyle().Background(tint.Bg()).Height(m.height).Width(m.width).Padding(2).Render(s)
 }
 
-func main() {
+func Start(config Configuration) {
+	// Set up color scheme
 	tint.NewDefaultRegistry()
 	tint.SetTint(tint.TintAfterglow)
-	// tint.SetTint(tint.TintArthur)
-
-	var debug_file io.Writer
-	debug_file, err := os.OpenFile("./run.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
-	if err != nil {
-		fmt.Println("Could not create log file: ", err)
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(debug_file, nil)))
-	slog.SetLogLoggerLevel(slog.LevelInfo)
-	slog.Info("Starting Excel-Editor...")
 
 	var resultChan = make(chan tea.Model)
 	l := NewLoadingScreen(resultChan)
 	go func() {
-		resultChan <- initialModel()
+		resultChan <- initialModel(config)
 	}()
 
 	p := tea.NewProgram(l, tea.WithAltScreen())

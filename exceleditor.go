@@ -8,7 +8,6 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/xuri/excelize/v2"
@@ -36,13 +35,20 @@ type RowEntry struct {
 }
 
 type Configuration struct {
-	EXCEL_FILE         string
-	COL_ID_DATE        int
-	COL_ID_HOURS_START int
-	COL_ID_HOURS_END   int
-	COL_ID_HOURS_PAUSE int
-	ROW_ID_ENTRY_START int
-	OutputFile         string
+	EXCEL_FILE          string
+	COL_ID_DATE         int
+	COL_ID_HOURS_START  int
+	COL_ID_HOURS_END    int
+	COL_ID_HOURS_PAUSE  int
+	ROW_ID_ENTRY_START  int
+	OutputFile          string
+	ProjectNumbersSheet string
+}
+
+type Project struct {
+	ID       string
+	Name     string
+	Customer string
 }
 
 var excelEpoch = time.Date(1899, time.December, 30, 0, 0, 0, 0, time.UTC)
@@ -70,10 +76,14 @@ func ReadEntryFromRowAt(currentRow []string, sheet string, rowIdx, colIdx int) (
 	//   slog.Error("Could not parse date", "err", err)
 	// }
 	if len(currentRow) == 0 {
+		slog.Debug("Trying to read empty row", "sheet", sheet, "rowIndex", rowIdx, "colStart", colIdx)
 		return RowEntry{}, errors.New("trying to read from empty row")
 	}
 	res.Date = excelDateToDate(currentRow[colIdx+0])
 
+	if len(currentRow) < 10 {
+		return RowEntry{}, errors.New(fmt.Sprintf("Not enough entries in the row: %s", currentRow))
+	}
 	res.Day = currentRow[colIdx+1]
 	if res.Day == "" {
 		slog.Error("No day provided", "day", res.Day)
@@ -142,6 +152,7 @@ func calcDurationFromFloat(f string) time.Duration {
 
 func ReturnAll(config Configuration) [][][]RowEntry {
 	f, err := excelize.OpenFile(config.EXCEL_FILE, excelize.Options{RawCellValue: true})
+	defer f.Close()
 	if err != nil {
 		slog.Error("Failed to open file", "file", config.EXCEL_FILE)
 		os.Exit(1)
@@ -168,40 +179,24 @@ func ReturnAll(config Configuration) [][][]RowEntry {
 func ReturnMonth(month string, config Configuration) [][]RowEntry {
 	slog.Debug("Reading ", "file", config.EXCEL_FILE)
 	f, err := excelize.OpenFile(config.EXCEL_FILE, excelize.Options{RawCellValue: true})
+	defer f.Close()
 	if err != nil {
 		slog.Error("Failed to read excel file: ", "err", err)
 		os.Exit(1)
 	}
 
-	// defer f.Save()
-	defer f.Close()
-
-	// sheetName := strconv.Itoa(currentMonth)
 	sheetName := month
 
-	//fmt.Println("First entry row: ", rows[ROW_ID_ENTRY_START])
 	rows, err := f.GetRows(sheetName, excelize.Options{RawCellValue: true})
 	if err != nil {
-		// slog.Error("Failed to get rows of sheet", "sheet", sheetName, "err", err)
+		slog.Error("Failed to get rows of sheet", "sheet", sheetName, "err", err)
 		return [][]RowEntry{}
 	}
-
-	// formula, err := f.GetCellFormula(sheetName, "G7")
-	// if err != nil {
-	// 	slog.Error("Could not read cell formula: ", "err", err.Error())
-	// }
-	// slog.Info("Read formula", "formula", formula)
-
-	// style, err := f.GetCellStyle(sheetName, "G7")
-	// if err != nil {
-	// 	slog.Error("Could not read cell style", "err", err.Error())
-	// }
-	// slog.Info("Read style", "style", style)
 
 	var rowEntries []RowEntry
 	for i, row := range rows[config.ROW_ID_ENTRY_START:] {
 		rowEntry, err := ReadEntryFromRow(row, sheetName, i)
-		slog.Debug("Parsed row: ", "row", rowEntry, "error", err)
+		// slog.Debug("Parsed row: ", "row", rowEntry, "error", err)
 		if err != nil {
 			continue
 		}
@@ -236,49 +231,40 @@ func WriteRowEntry(f *excelize.File, sheetname string, row int, entry RowEntry) 
 	// slog.Info("Read value: ", "value", res)
 
 	// slog.Info("Writing entry", "entry", entry)
-	// f.SetCellValue(sheetname, fmt.Sprintf("A%d", row), entry.Date)
+	f.SetCellValue(sheetname, fmt.Sprintf("A%d", row), entry.Date)
 	if entry.Start == entry.End {
-		for char := range []string{"C", "D", "E", "F", "I", "J"} {
-			f.SetCellValue(sheetname, fmt.Sprintf("%c%d", char, row), "")
-		}
-		f.SetCellFormula(sheetname, fmt.Sprintf("J%d", row), fmt.Sprintf("=IF(D%[1]d>=C%[1]d,(D%[1]d-C%[1]d-E%[1]d)*24)", row))
 		return
+		// for char := range []string{"C", "D", "E", "F", "I", "J"} {
+		// 	f.SetCellValue(sheetname, fmt.Sprintf("%c%d", char, row), nil)
+		// }
+		// // f.SetCellFormula(sheetname, fmt.Sprintf("J%d", row), fmt.Sprintf("=IF(D%[1]d>=C%[1]d,(D%[1]d-C%[1]d-E%[1]d)*24)", row))
+		// return
 	}
 
-	// res, err := f.CalcCellValue(sheetname, fmt.Sprintf("B%d", row))
-	// if err != nil {
-	// 	slog.Error("Failed to calc day for date", "entry", entry)
-	// }
-
-	// f.SetCellValue(sheetname, fmt.Sprintf("B%d", row), entry.Day)
-	f.SetCellFormula(sheetname, fmt.Sprintf("B%d", row), fmt.Sprintf("=LEFT(TEXT(A%d,\"TTTT\"),2)", row))
-	f.UpdateLinkedValue()
-	// f.UpdateLinkedValue()
-	f.SetCellStr(sheetname, fmt.Sprintf("C%d", row), entry.Start.Format("15:04"))
+	f.SetCellValue(sheetname, fmt.Sprintf("B%d", row), entry.Day)
+	f.SetCellValue(sheetname, fmt.Sprintf("C%d", row), entry.Start.Format("15:04"))
 	f.SetCellValue(sheetname, fmt.Sprintf("D%d", row), entry.End.Format("15:04"))
 	if entry.Pause > time.Duration(0) {
 		f.SetCellValue(sheetname, fmt.Sprintf("E%d", row), entry.Pause)
 	} else {
-		f.SetCellValue(sheetname, fmt.Sprintf("E%d", row), "")
+		f.SetCellValue(sheetname, fmt.Sprintf("E%d", row), nil)
 	}
 	f.SetCellValue(sheetname, fmt.Sprintf("F%d", row), entry.ProjectNr)
 	f.SetCellValue(sheetname, fmt.Sprintf("I%d", row), entry.Description)
-	// d := entry.End.Sub(entry.Start)
-	// hour := int(d.Hours())
-	// minute := int(d.Minutes()) % 60
-	// f.SetCellValue(sheetname, fmt.Sprintf("J%d", row), fmt.Sprintf("%02d:%02d\n", hour, minute))
-	f.SetCellValue(sheetname, fmt.Sprintf("J%d", row), "")
-	f.SetCellFormula(sheetname, fmt.Sprintf("J%d", row), fmt.Sprintf("=IF(D%[1]d>=C%[1]d,(D%[1]d-C%[1]d-E%[1]d)*24)", row))
-	f.UpdateLinkedValue()
-
+	d := entry.End.Sub(entry.Start) - entry.Pause
+	hour := int(d.Hours())
+	minute := int(d.Minutes()) % 60
+	f.SetCellFloat(sheetname, fmt.Sprintf("J%d", row), float64(hour)+float64(minute)/60.0, 2, 64)
 }
-
-// func EraseExtraEntry(f *excelize.File, sheetname string, lastEntry int)
 
 func WriteRowEntries(entries map[string][][]RowEntry, config Configuration) {
 	f, err := excelize.OpenFile(config.EXCEL_FILE, excelize.Options{RawCellValue: true})
+	defer f.Close()
 	if err != nil {
-		slog.Error("Could not read from file during export", "error", err)
+		slog.Debug("Failed with config", "config", config)
+		slog.Error("Could not read from file during export", "file", config.EXCEL_FILE, "error", err)
+		slog.Error(err.Error())
+		return
 	}
 
 	for sheetname, month := range entries {
@@ -287,71 +273,113 @@ func WriteRowEntries(entries map[string][][]RowEntry, config Configuration) {
 		for _, day := range month {
 
 			if len(day) == 0 {
-				slog.Info("Skipping line", "rowIndex", currentRowIndex)
+				// slog.Info("Skipping line", "rowIndex", currentRowIndex)
 				currentRowIndex += 1
 				continue
 			}
-			style, _ := f.GetCellStyle(sheetname, fmt.Sprintf("A%d", currentRowIndex))
+			// style, _ := f.GetCellStyle(sheetname, fmt.Sprintf("A%d", currentRowIndex))
+			// slog.Debug("Trying to get current date entry...", "sheet", sheetname, "row", currentRowIndex, "f", f)
 			writtenDateStr, _ := f.GetCellValue(sheetname, fmt.Sprintf("A%d", currentRowIndex))
 			writtenDate := excelDateToDate(writtenDateStr)
-			slog.Info("Writing line", "rowIndex", currentRowIndex, "writtenDay", writtenDate, "entryDate", day[0].Date, "style", style)
+			// slog.Info("Writing line", "rowIndex", currentRowIndex, "writtenDay", writtenDate, "entryDate", day[0].Date, "style", style)
 
-			if writtenDate.Before(day[0].Date) {
-				f.RemoveRow(sheetname, currentRowIndex)
+			for {
+				if !writtenDate.Before(day[0].Date) || writtenDateStr == "" {
+					break
+				}
+				// slog.Info("Skipping row", "sheet", sheetname, "row", currentRowIndex, "writtenDate", writtenDate, "writtenDateStr", writtenDateStr, "entryDate", day[0].Date)
+				currentRowIndex += 1
+				writtenDateStr, _ := f.GetCellValue(sheetname, fmt.Sprintf("A%d", currentRowIndex))
+				writtenDate = excelDateToDate(writtenDateStr)
+				// time.Sleep(time.Millisecond * time.Duration(100))
 			}
 
 			WriteRowEntry(f, sheetname, currentRowIndex, day[0])
 			for _, entry := range day[1:] {
-				f.DuplicateRow(sheetname, currentRowIndex)
-				currentRowIndex += 1
-				writtenDateStr, _ := f.GetCellValue(sheetname, fmt.Sprintf("A%d", currentRowIndex))
+
+				writtenDateStr, _ := f.GetCellValue(sheetname, fmt.Sprintf("A%d", currentRowIndex+1))
 				writtenDate = excelDateToDate(writtenDateStr)
-				slog.Info("Writing line", "rowIndex", currentRowIndex, "writtenDay", writtenDate, "entryDate", entry.Date, "style", style)
+
+				if !writtenDate.Equal(entry.Date) || writtenDateStr == "" {
+					f.DuplicateRow(sheetname, currentRowIndex)
+				}
+				// slog.Info("Writing line", "rowIndex", currentRowIndex, "writtenDay", writtenDate, "entryDate", entry.Date, "style", style)
+				currentRowIndex += 1
 				WriteRowEntry(f, sheetname, currentRowIndex, entry)
 			}
 
-			currentRowIndex += 1
+			for {
+				lastEntryDate, _ := f.GetCellValue(sheetname, fmt.Sprintf("A%d", currentRowIndex))
+				nextEntryDate, _ := f.GetCellValue(sheetname, fmt.Sprintf("A%d", currentRowIndex+1))
 
+				if lastEntryDate == nextEntryDate || writtenDateStr == "" {
+					f.RemoveRow(sheetname, currentRowIndex+1)
+					continue
+				}
+				break
+
+			}
+			// currentRowIndex += 1
+		}
+
+		dimension, _ := f.GetSheetDimension(sheetname)
+		if err := f.UnsetConditionalFormat(sheetname, dimension); err != nil {
+			slog.Error("Could not unset conditional format", "error", err)
+		} else {
+			slog.Debug("Successfully unset conditional formatting", "dimension", dimension)
 		}
 	}
 
-	indx, _ := f.GetSheetIndex("Gesamt")
+	// indx, _ := f.GetSheetIndex("Gesamt")
 
 	// Fix formulas in overview
-	for row := 4; row <= 15; row++ {
-		for _, col := range []string{"F", "G", "H"} {
-			sheetNum := row - 3
-			cell := fmt.Sprintf("%s%d", col, row)
-			formula, _ := f.GetCellFormula("Gesamt", cell)
-			newFormula := strings.ReplaceAll(formula, fmt.Sprintf("%02d!", sheetNum), fmt.Sprintf("$'%02d'.", sheetNum))
-			newFormula = newFormula[:len(newFormula)-1]
-			f.SetCellValue("Gesamt", cell, "")
-			f.SetCellFormula("Gesamt", cell, newFormula)
-			res, _ := f.GetCellFormula("Gesamt", cell)
-			slog.Info("Wrote formula", "cell", cell, "old", formula, "new", res)
-			f.UpdateLinkedValue()
-		}
-	}
+	// for row := 4; row <= 15; row++ {
+	// 	for _, col := range []string{"F", "G", "H"} {
+	// 		sheetNum := row - 3
+	// 		cell := fmt.Sprintf("%s%d", col, row)
+	// 		formula, _ := f.GetCellFormula("Gesamt", cell)
+	// 		newFormula := strings.ReplaceAll(formula, fmt.Sprintf("%02d!", sheetNum), fmt.Sprintf("$'%02d'.", sheetNum))
+	// 		// newFormula = newFormula[:len(newFormula)-1]
+	// 		// f.SetCellValue("Gesamt", cell, "")
+	// 		f.SetCellFormula("Gesamt", cell, newFormula)
+	// 		res, _ := f.GetCellFormula("Gesamt", cell)
+	// 		slog.Info("Wrote formula", "cell", cell, "old", formula, "new", res)
+	// 		f.UpdateLinkedValue()
+	// 	}
+	// }
 
-	f.SetActiveSheet(indx)
+	f.UpdateLinkedValue()
+	// f.SetActiveSheet(indx)
 	f.SaveAs(config.OutputFile, excelize.Options{RawCellValue: true})
 }
 
-func WriteExampleFile(config Configuration) {
-	f, err := excelize.OpenFile(config.EXCEL_FILE, excelize.Options{RawCellValue: true})
+func GetProjectNumbers(config Configuration) (map[string]Project, map[string]Project, map[string]Project) {
+	f, err := excelize.OpenFile(config.EXCEL_FILE)
+	defer f.Close()
 	if err != nil {
-		slog.Error("Failed to open file", "file", config.EXCEL_FILE)
-		return
+		slog.Error("Could not read from file while getting project numbers", "error", err)
 	}
 
-	f.SetCellValue("01", "C6", "This is a test")
-	f.DuplicateRowTo("01", 10, 15)
-	f.RemoveRow("01", 20)
-	f.SetCellStyle("01", fmt.Sprintf("A%d", config.ROW_ID_ENTRY_START), fmt.Sprintf("A%d", config.ROW_ID_ENTRY_START), 6)
-
-	if err := f.SaveAs("./result.xlsx", excelize.Options{RawCellValue: true}); err != nil {
-		slog.Error("Failed to save file", "error", err)
+	rows, err := f.GetRows(config.ProjectNumbersSheet)
+	if err != nil {
+		slog.Error("Could not rows of project numbers", "error", err)
 	}
 
-	slog.Info("Save file successfully")
+	var projectNumbers = make(map[string]Project)
+	var projectNames = make(map[string]Project)
+	var projectCustomers = make(map[string]Project)
+
+	slog.Info("Read file", "file", config.EXCEL_FILE, "sheets", f.GetSheetList())
+
+	for _, row := range rows[4:] {
+		if len(row) < 3 || row[0] == "" || row[1] == "" || row[2] == "" {
+			// slog.Info("Skipping entry in project numbers", "row", row)
+			continue
+		}
+		projectNumbers[row[0]] = Project{ID: row[0], Name: row[1], Customer: row[2]}
+		projectNames[row[1]] = Project{ID: row[0], Name: row[1], Customer: row[2]}
+		projectCustomers[row[2]] = Project{ID: row[0], Name: row[1], Customer: row[2]}
+	}
+
+	return projectNumbers, projectNames, projectCustomers
 }
