@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"os"
 	"sort"
 	"strconv"
 	"time"
@@ -35,7 +34,8 @@ type RowEntry struct {
 }
 
 type Configuration struct {
-	EXCEL_FILE          string
+	ExcelFileName       string
+	ExcelFile           *excelize.File
 	COL_ID_DATE         int
 	COL_ID_HOURS_START  int
 	COL_ID_HOURS_END    int
@@ -60,6 +60,10 @@ func excelDateToDate(excelDate string) time.Time {
 func dateToExcelDate(date time.Time) string {
 	dur := date.Sub(excelEpoch)
 	return fmt.Sprint(math.Floor(dur.Abs().Hours()))
+}
+
+func timeToFloat(time time.Time) float64 {
+	return (float64(time.Hour()*60) + float64(time.Minute())) / (24 * 60.0)
 }
 
 // func ReadEntryFromRowAt(f *excelize.File, sheet string, row int, col int) (RowEntry, error){
@@ -134,9 +138,12 @@ func calcTimeFromFloat(date time.Time, f string) time.Time {
 	}
 	tmp, err := strconv.ParseFloat(f, 64)
 	if err != nil {
-		slog.Error("Failed to parse float: ", "string", f)
+		slog.Error("Failed to parse time from float, falling back to string parsing... ", "string", f)
+
 	}
-	return date.Add(time.Duration(int(tmp*24))*time.Hour + time.Duration(int(math.Mod(tmp*24, 1.0)*60))*time.Minute)
+	var hours = int(tmp * 24)
+	var minutes = (math.Round((tmp - float64(hours)/24) * 24 * 60 * 100)) / 100
+	return date.Add(time.Duration(int(hours))*time.Hour + time.Duration(int(minutes))*time.Minute)
 }
 
 func calcDurationFromFloat(f string) time.Duration {
@@ -145,18 +152,13 @@ func calcDurationFromFloat(f string) time.Duration {
 	}
 	tmp, err := strconv.ParseFloat(f, 32)
 	if err != nil {
-		slog.Error("Failed to parse float: ", "string", f)
+		slog.Error("Failed to parse time from float, falling back to string parsing... ", "string", f)
 	}
 	return time.Duration(int(tmp*24))*time.Hour + time.Duration(int(math.Mod(tmp*24, 1.0)*60))*time.Minute
 }
 
 func ReturnAll(config Configuration) [][][]RowEntry {
-	f, err := excelize.OpenFile(config.EXCEL_FILE, excelize.Options{RawCellValue: true})
-	defer f.Close()
-	if err != nil {
-		slog.Error("Failed to open file", "file", config.EXCEL_FILE)
-		os.Exit(1)
-	}
+	f := config.ExcelFile
 	sheetMap := f.GetSheetMap()
 	sheetNames := make([]string, 0, len(sheetMap))
 	for _, v := range sheetMap {
@@ -177,14 +179,8 @@ func ReturnAll(config Configuration) [][][]RowEntry {
 }
 
 func ReturnMonth(month string, config Configuration) [][]RowEntry {
-	slog.Debug("Reading ", "file", config.EXCEL_FILE)
-	f, err := excelize.OpenFile(config.EXCEL_FILE, excelize.Options{RawCellValue: true})
-	defer f.Close()
-	if err != nil {
-		slog.Error("Failed to read excel file: ", "err", err)
-		os.Exit(1)
-	}
 
+	f := config.ExcelFile
 	sheetName := month
 
 	rows, err := f.GetRows(sheetName, excelize.Options{RawCellValue: true})
@@ -198,9 +194,12 @@ func ReturnMonth(month string, config Configuration) [][]RowEntry {
 		rowEntry, err := ReadEntryFromRow(row, sheetName, i)
 		// slog.Debug("Parsed row: ", "row", rowEntry, "error", err)
 		if err != nil {
+			slog.Debug("Error while parsing row: ", "row", rowEntry, "error", err)
 			continue
 		}
-		rowEntries = append(rowEntries, rowEntry)
+		if !rowEntry.Start.Equal(rowEntry.End) {
+			rowEntries = append(rowEntries, rowEntry)
+		}
 	}
 
 	var res = make([][]RowEntry, 31)
@@ -241,9 +240,14 @@ func WriteRowEntry(f *excelize.File, sheetname string, row int, entry RowEntry) 
 		// return
 	}
 
-	f.SetCellValue(sheetname, fmt.Sprintf("B%d", row), entry.Day)
+	// f.SetCellValue(sheetname, fmt.Sprintf("B%d", row), entry.Day)
+	// f.SetCellValue(sheetname, fmt.Sprintf("B%d", row), "Mo")
 	f.SetCellValue(sheetname, fmt.Sprintf("C%d", row), entry.Start.Format("15:04"))
+	// f.SetCellValue(sheetname, fmt.Sprintf("C%d", row), entry.Start.Format("15:04")+":00")
+	// f.SetCellValue(sheetname, fmt.Sprintf("C%d", row), timeToFloat(entry.Start))
+	// f.SetCellFloat(sheetname, fmt.Sprintf("D%d", row), timeToFloat(entry.End), 8, 64)
 	f.SetCellValue(sheetname, fmt.Sprintf("D%d", row), entry.End.Format("15:04"))
+	// f.SetCellValue(sheetname, fmt.Sprintf("D%d", row), entry.End.Format("15:04")+":00")
 	if entry.Pause > time.Duration(0) {
 		f.SetCellValue(sheetname, fmt.Sprintf("E%d", row), entry.Pause)
 	} else {
@@ -251,22 +255,15 @@ func WriteRowEntry(f *excelize.File, sheetname string, row int, entry RowEntry) 
 	}
 	f.SetCellValue(sheetname, fmt.Sprintf("F%d", row), entry.ProjectNr)
 	f.SetCellValue(sheetname, fmt.Sprintf("I%d", row), entry.Description)
-	d := entry.End.Sub(entry.Start) - entry.Pause
-	hour := int(d.Hours())
-	minute := int(d.Minutes()) % 60
-	f.SetCellFloat(sheetname, fmt.Sprintf("J%d", row), float64(hour)+float64(minute)/60.0, 2, 64)
+	// d := entry.End.Sub(entry.Start) - entry.Pause
+	// hour := int(d.Hours())
+	// minute := int(d.Minutes()) % 60
+	// f.SetCellFloat(sheetname, fmt.Sprintf("J%d", row), float64(hour)+float64(minute)/60.0, 2, 64)
 }
 
 func WriteRowEntries(entries map[string][][]RowEntry, config Configuration) {
-	f, err := excelize.OpenFile(config.EXCEL_FILE, excelize.Options{RawCellValue: true})
-	defer f.Close()
-	if err != nil {
-		slog.Debug("Failed with config", "config", config)
-		slog.Error("Could not read from file during export", "file", config.EXCEL_FILE, "error", err)
-		slog.Error(err.Error())
-		return
-	}
 
+	f := config.ExcelFile
 	for sheetname, month := range entries {
 		slog.Info("Writing entries for month", "month", sheetname, "#days", len(month))
 		var currentRowIndex = config.ROW_ID_ENTRY_START
@@ -322,12 +319,12 @@ func WriteRowEntries(entries map[string][][]RowEntry, config Configuration) {
 			// currentRowIndex += 1
 		}
 
-		dimension, _ := f.GetSheetDimension(sheetname)
-		if err := f.UnsetConditionalFormat(sheetname, dimension); err != nil {
-			slog.Error("Could not unset conditional format", "error", err)
-		} else {
-			slog.Debug("Successfully unset conditional formatting", "dimension", dimension)
-		}
+		// dimension, _ := f.GetSheetDimension(sheetname)
+		// if err := f.UnsetConditionalFormat(sheetname, dimension); err != nil {
+		// 	slog.Error("Could not unset conditional format", "error", err)
+		// } else {
+		// 	slog.Debug("Successfully unset conditional formatting", "dimension", dimension)
+		// }
 	}
 
 	// indx, _ := f.GetSheetIndex("Gesamt")
@@ -354,12 +351,8 @@ func WriteRowEntries(entries map[string][][]RowEntry, config Configuration) {
 }
 
 func GetProjectNumbers(config Configuration) (map[string]Project, map[string]Project, map[string]Project) {
-	f, err := excelize.OpenFile(config.EXCEL_FILE)
-	defer f.Close()
-	if err != nil {
-		slog.Error("Could not read from file while getting project numbers", "error", err)
-	}
 
+	f := config.ExcelFile
 	rows, err := f.GetRows(config.ProjectNumbersSheet)
 	if err != nil {
 		slog.Error("Could not rows of project numbers", "error", err)
@@ -369,7 +362,7 @@ func GetProjectNumbers(config Configuration) (map[string]Project, map[string]Pro
 	var projectNames = make(map[string]Project)
 	var projectCustomers = make(map[string]Project)
 
-	slog.Info("Read file", "file", config.EXCEL_FILE, "sheets", f.GetSheetList())
+	slog.Info("Read file", "file", config.ExcelFileName, "sheets", f.GetSheetList())
 
 	for _, row := range rows[4:] {
 		if len(row) < 3 || row[0] == "" || row[1] == "" || row[2] == "" {

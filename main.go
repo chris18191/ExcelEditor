@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+
+	"github.com/xuri/excelize/v2"
 )
 
 func main() {
@@ -39,9 +41,16 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(debug_file, &slog.HandlerOptions{Level: loglevel})))
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
+	f, err := excelize.OpenFile(inputfile, excelize.Options{RawCellValue: true})
+	if err != nil {
+		slog.Error("Failed to open excel file", "file", inputfile, "error", err)
+		os.Exit(1)
+	}
+
 	slog.Info("Starting Excel-Editor...")
 	var config Configuration = Configuration{
-		EXCEL_FILE:          inputfile,
+		ExcelFileName:       inputfile,
+		ExcelFile:           f,
 		COL_ID_DATE:         0,
 		COL_ID_HOURS_START:  2,
 		COL_ID_HOURS_END:    3,

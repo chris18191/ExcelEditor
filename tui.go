@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"strings"
@@ -19,7 +20,7 @@ import (
 var WEEKDAYS = []string{"So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"}
 
 var debugConfig = Configuration{
-	EXCEL_FILE:          "res/test.xlsx",
+	ExcelFileName:       "res/test.xlsx",
 	COL_ID_DATE:         0,
 	COL_ID_HOURS_START:  2,
 	COL_ID_HOURS_END:    3,
@@ -143,6 +144,9 @@ func initialModel(config Configuration) Model {
 			"inputFieldErr": lipgloss.NewStyle().
 				Italic(true).
 				Foreground(tint.Red()),
+			"dailySum": lipgloss.NewStyle().
+				Bold(true).
+				Foreground(tint.BrightCyan()),
 		},
 	}
 }
@@ -207,6 +211,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, keys.PrevDay) && !m.editActive:
+			if m.datepicker.currentDay.Month() == time.January && m.datepicker.currentDay.Day() == 1 {
+				m.debugMessage = "Reached first day of the year!"
+				break
+			}
 			m.datepicker.currentDay = m.datepicker.currentDay.AddDate(0, 0, -1)
 			if m.currentSelectedRow >= len(*m.getCurrentDayEntries()) {
 				m.currentSelectedRow -= 1
@@ -217,6 +225,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// m.currentSelectedRow = int(math.Min(float64(m.currentSelectedRow), float64(len(*m.getCurrentDayEntries())-1)))
 			// m.entryList.UpdateCurrentIndex(m.datepicker.currentDay)
 		case key.Matches(msg, keys.NextDay) && !m.editActive:
+			if m.datepicker.currentDay.Month() == time.December && m.datepicker.currentDay.Day() == 31 {
+				m.debugMessage = "Reached last day of the year!"
+				break
+			}
 			m.datepicker.currentDay = m.datepicker.currentDay.AddDate(0, 0, 1)
 			if m.currentSelectedRow >= len(*m.getCurrentDayEntries()) {
 				m.currentSelectedRow -= 1
@@ -357,6 +369,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				entry.Description = readTextInputWithDefault(&m.textInputs[3])
 				trySettingCurrentSelectedProjectNr(&m)
 				entry.ProjectNr = readTextInputWithDefault(&m.textInputs[4])
+				entry.Project = m.projectNumbers[entry.ProjectNr].Name
+				slog.Info("Trying to set project information...", "entry", entry)
 			}
 			m.entryList.Entries[m.datepicker.currentDay.Month()-1][m.datepicker.currentDay.Day()-1][m.currentSelectedRow] = entry
 
@@ -431,12 +445,13 @@ func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
 }
 
 func (r RowEntry) View() string {
-	return fmt.Sprintf("%10s  %8s → %-8s [%9s] %20s",
+	return fmt.Sprintf("%10s  %8s → %-8s [%9s] %20.20s :  %20.20s",
 		r.Date.Format("Mon 02.01."),
 		r.Start.Format("15:04"),
 		r.End.Format("15:04"),
 		r.Pause.String(),
 		r.Project,
+		r.Description,
 	)
 }
 
@@ -468,18 +483,20 @@ func (m Model) View() string {
 	s += fmt.Sprintf("\n")
 
 	s += m.styles["tableHeader"].Render(
-		fmt.Sprintf(" %-10s  %-8s   %-8s %-9s   %-20s", "Date", "Start", "End", "Pause", "Description"),
+		fmt.Sprintf(" %-10s  %-8s   %-8s %-9s   %-20s    %-20s", "Date", "Start", "End", "Pause", "Project", "Description"),
 	)
 	s += "\n"
 
 	indent := "  "
 	todaysEntries := *m.getCurrentDayEntries()
+	var totalWorkDay time.Duration = time.Duration(0)
 	if len(todaysEntries) <= 0 {
 
 	} else {
 		for i := 0; i < m.currentSelectedRow; i++ {
 			s += indent
 			s += m.styles["unselectedEntry"].Render(todaysEntries[i].View()) + "\n"
+			totalWorkDay += todaysEntries[i].End.Sub(todaysEntries[i].Start)
 		}
 		if m.editActive {
 			s += indent + strings.Repeat(" ", 12)
@@ -507,15 +524,23 @@ func (m Model) View() string {
 			} else {
 				s += indent
 				s += m.styles["selectedEntry"].Render(todaysEntries[m.currentSelectedRow].View()) + "\n"
+				totalWorkDay += todaysEntries[m.currentSelectedRow].End.Sub(todaysEntries[m.currentSelectedRow].Start)
 			}
 		}
 		for i := m.currentSelectedRow + 1; i < len(todaysEntries); i++ {
 			s += indent
 			s += m.styles["unselectedEntry"].Render(todaysEntries[i].View()) + "\n"
+			totalWorkDay += todaysEntries[i].End.Sub(todaysEntries[i].Start)
 		}
 	}
 
-	s += "\n\n\n\n"
+	s += "\n"
+
+	totalWorkDay = totalWorkDay.Round(time.Duration(1) * time.Minute)
+
+	s += m.styles["dailySum"].Render(fmt.Sprintf("Total hours: %02.0f:%02d", totalWorkDay.Hours(), int(totalWorkDay.Minutes())%60))
+
+	s += "\n\n"
 	s += "\n\n#######\nDebug: " + m.debugMessage + "\n#######\n\n"
 
 	s += m.help.View(m.keys)
