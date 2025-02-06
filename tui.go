@@ -118,7 +118,7 @@ func initialModel(config Configuration) Model {
 		width:  100,
 
 		projectNumberIndex:   0,
-		projectNumberVisible: 5,
+		projectNumberVisible: 10,
 
 		styles: map[string]lipgloss.Style{
 			"header": lipgloss.NewStyle().
@@ -505,14 +505,14 @@ func (m Model) View() string {
 
 			if m.focusedIndex == 4 && m.textInputs[4].Value() != "" {
 
-				indent := strings.Repeat(" ", 30)
+				indent := strings.Repeat(" ", 10)
 				s += "\n"
 
 				for i := 0; i < len(m.potentialProjects); i++ {
 					if i == m.projectNumberIndex {
-						s += m.styles["selectedEntry"].Render(fmt.Sprintf("%s%s%s: %15.15s [%15.15s]", indent, "◉", m.potentialProjects[i].ID, m.potentialProjects[i].Name, m.potentialProjects[i].Customer)) + "\n"
+						s += m.styles["selectedEntry"].Render(fmt.Sprintf("%s%s %s: %-50.50s [%20.20s]", indent, "◉", m.potentialProjects[i].ID, m.potentialProjects[i].Name, m.potentialProjects[i].Customer)) + "\n"
 					} else {
-						s += m.styles["selectedEntry"].Render(fmt.Sprintf("%s%s%s: %15.15s [%15.15s]", indent, "○", m.potentialProjects[i].ID, m.potentialProjects[i].Name, m.potentialProjects[i].Customer)) + "\n"
+						s += m.styles["selectedEntry"].Render(fmt.Sprintf("%s%s %s: %50.50s [%20.20s]", indent, "○", m.potentialProjects[i].ID, m.potentialProjects[i].Name, m.potentialProjects[i].Customer)) + "\n"
 					}
 				}
 
