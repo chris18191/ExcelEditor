@@ -497,6 +497,7 @@ func (m Model) View() string {
 			s += indent
 			s += m.styles["unselectedEntry"].Render(todaysEntries[i].View()) + "\n"
 			totalWorkDay += todaysEntries[i].End.Sub(todaysEntries[i].Start)
+			totalWorkDay -= todaysEntries[i].Pause
 		}
 		if m.editActive {
 			s += indent + strings.Repeat(" ", 12)
@@ -525,12 +526,14 @@ func (m Model) View() string {
 				s += indent
 				s += m.styles["selectedEntry"].Render(todaysEntries[m.currentSelectedRow].View()) + "\n"
 				totalWorkDay += todaysEntries[m.currentSelectedRow].End.Sub(todaysEntries[m.currentSelectedRow].Start)
+				totalWorkDay -= todaysEntries[m.currentSelectedRow].Pause
 			}
 		}
 		for i := m.currentSelectedRow + 1; i < len(todaysEntries); i++ {
 			s += indent
 			s += m.styles["unselectedEntry"].Render(todaysEntries[i].View()) + "\n"
 			totalWorkDay += todaysEntries[i].End.Sub(todaysEntries[i].Start)
+			totalWorkDay -= todaysEntries[i].Pause
 		}
 	}
 
