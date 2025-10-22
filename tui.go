@@ -444,8 +444,12 @@ func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (r RowEntry) View() string {
-	return fmt.Sprintf("%10s  %8s → %-8s [%9s] %20.20s :  %20.20s",
+func formatEntry(r RowEntry, columns []int) string {
+	// Format entry with dynamic column widths
+	format := fmt.Sprintf("%%-%ds  %%-%ds   %%-%ds %%-%ds   %%-%ds    %%-%ds",
+		columns[0], columns[1], columns[2], columns[3], columns[4], columns[5])
+
+	return fmt.Sprintf(format,
 		r.Date.Format("Mon 02.01."),
 		r.Start.Format("15:04"),
 		r.End.Format("15:04"),
@@ -476,14 +480,42 @@ func (m *Model) ViewAsEdit() string {
 }
 
 func (m Model) View() string {
+	// Calculate column widths based on available terminal width
+	// Subtract some space for padding and borders
+	availableWidth := m.width - 10 // Subtract padding and borders
+	if availableWidth < 50 {
+		availableWidth = 50 // Minimum width
+	}
+
+	// Define column proportions (total should be 1.0)
+	dateWidth := 0.15
+	startWidth := 0.12
+	endWidth := 0.12
+	pauseWidth := 0.15
+	projectWidth := 0.23
+	descWidth := 0.23
+
+	// Calculate actual column widths
+	columns := []int{
+		int(float64(availableWidth) * dateWidth),
+		int(float64(availableWidth) * startWidth),
+		int(float64(availableWidth) * endWidth),
+		int(float64(availableWidth) * pauseWidth),
+		int(float64(availableWidth) * projectWidth),
+		int(float64(availableWidth) * descWidth),
+	}
+
 	s := ""
 	s += m.styles["header"].Render("Work Hour Editor")
 	s += "\n"
-	s += fmt.Sprintf("Current Date: [%12s] \n", m.datepicker.currentDay.Format("Mon 02.01.06"))
+	s += fmt.Sprintf("Current Date: [%s] \n", m.datepicker.currentDay.Format("Mon 02.01.06"))
 	s += fmt.Sprintf("\n")
 
+	// Create header with dynamic widths
+	headerFormat := fmt.Sprintf(" %%-%ds  %%-%ds   %%-%ds %%-%ds   %%-%ds    %%-%ds",
+		columns[0], columns[1], columns[2], columns[3], columns[4], columns[5])
 	s += m.styles["tableHeader"].Render(
-		fmt.Sprintf(" %-10s  %-8s   %-8s %-9s   %-20s    %-20s", "Date", "Start", "End", "Pause", "Project", "Description"),
+		fmt.Sprintf(headerFormat, "Date", "Start", "End", "Pause", "Project", "Description"),
 	)
 	s += "\n"
 
@@ -495,7 +527,7 @@ func (m Model) View() string {
 	} else {
 		for i := 0; i < m.currentSelectedRow; i++ {
 			s += indent
-			s += m.styles["unselectedEntry"].Render(todaysEntries[i].View()) + "\n"
+			s += m.styles["unselectedEntry"].Render(formatEntry(todaysEntries[i], columns)) + "\n"
 			totalWorkDay += todaysEntries[i].End.Sub(todaysEntries[i].Start)
 			totalWorkDay -= todaysEntries[i].Pause
 		}
@@ -505,15 +537,22 @@ func (m Model) View() string {
 			s += inputRow + "\n"
 
 			if m.focusedIndex == 4 && m.textInputs[4].Value() != "" {
+				// Calculate project list width based on available space
+				projectListWidth := m.width - 20
+				if projectListWidth < 50 {
+					projectListWidth = 50
+				}
 
 				indent := strings.Repeat(" ", 10)
 				s += "\n"
 
 				for i := 0; i < len(m.potentialProjects); i++ {
+					projectFormat := fmt.Sprintf("%%s%%s %%-%ds: %%-%ds [%%20.20s]",
+						projectListWidth/3, projectListWidth/3)
 					if i == m.projectNumberIndex {
-						s += m.styles["selectedEntry"].Render(fmt.Sprintf("%s%s %s: %-50.50s [%20.20s]", indent, "◉", m.potentialProjects[i].ID, m.potentialProjects[i].Name, m.potentialProjects[i].Customer)) + "\n"
+						s += m.styles["selectedEntry"].Render(fmt.Sprintf(projectFormat, indent, "◉", m.potentialProjects[i].ID, m.potentialProjects[i].Name, m.potentialProjects[i].Customer)) + "\n"
 					} else {
-						s += m.styles["selectedEntry"].Render(fmt.Sprintf("%s%s %s: %50.50s [%20.20s]", indent, "○", m.potentialProjects[i].ID, m.potentialProjects[i].Name, m.potentialProjects[i].Customer)) + "\n"
+						s += m.styles["selectedEntry"].Render(fmt.Sprintf(projectFormat, indent, "○", m.potentialProjects[i].ID, m.potentialProjects[i].Name, m.potentialProjects[i].Customer)) + "\n"
 					}
 				}
 
@@ -524,14 +563,14 @@ func (m Model) View() string {
 				m.debugMessage = "Current row > entries length"
 			} else {
 				s += indent
-				s += m.styles["selectedEntry"].Render(todaysEntries[m.currentSelectedRow].View()) + "\n"
+				s += m.styles["selectedEntry"].Render(formatEntry(todaysEntries[m.currentSelectedRow], columns)) + "\n"
 				totalWorkDay += todaysEntries[m.currentSelectedRow].End.Sub(todaysEntries[m.currentSelectedRow].Start)
 				totalWorkDay -= todaysEntries[m.currentSelectedRow].Pause
 			}
 		}
 		for i := m.currentSelectedRow + 1; i < len(todaysEntries); i++ {
 			s += indent
-			s += m.styles["unselectedEntry"].Render(todaysEntries[i].View()) + "\n"
+			s += m.styles["unselectedEntry"].Render(formatEntry(todaysEntries[i], columns)) + "\n"
 			totalWorkDay += todaysEntries[i].End.Sub(todaysEntries[i].Start)
 			totalWorkDay -= todaysEntries[i].Pause
 		}
