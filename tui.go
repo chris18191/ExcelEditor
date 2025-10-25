@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 	tint "github.com/lrstanley/bubbletint"
 )
 
@@ -93,6 +94,7 @@ func initialModel(config Configuration) Model {
 	// help.Styles.Ellipsis = help.Styles.Ellipsis.Background(tint.Bg())
 
 	nr, name, custom := GetProjectNumbers(config)
+	var width, _, _ = term.GetSize(uintptr((os.Stdout.Fd())))
 
 	return Model{
 		datepicker: NewDatePicker(),
@@ -110,12 +112,12 @@ func initialModel(config Configuration) Model {
 		currentSelectedRow: 0,
 
 		editActive:   false,
-		numColumns:   5,
+		numColumns:   6, // Increased to include location field
 		textInputs:   []textinput.Model{},
 		focusedIndex: 0,
 
 		height: 50,
-		width:  100,
+		width:  width,
 
 		projectNumberIndex:   0,
 		projectNumberVisible: 10,
@@ -301,6 +303,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					Day:       (*todaysEntries)[len(*todaysEntries)-1].Day,
 					SheetName: (*todaysEntries)[len(*todaysEntries)-1].SheetName,
 					Start:     (*todaysEntries)[len(*todaysEntries)-1].End,
+					Location:  (*todaysEntries)[len(*todaysEntries)-1].Location,
 				}
 			}
 			*todaysEntries = append(*todaysEntries, newEntry)
@@ -340,17 +343,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						t.Width = 9
 						t.Validate = validateDuration
 					case 3:
-						t.Placeholder = "Description"
-						t.SetValue(entry.Description)
-						// if t.Placeholder = entry.Description; t.Placeholder == "" {
-						// }
-						t.Width = 40
+						// Location
+						t.Placeholder = "HO" // Default to HO
+						if entry.Location != "" {
+							t.SetValue(entry.Location)
+						}
+						t.CharLimit = 5
+						t.Width = 5
 					case 4:
 						if t.Placeholder = entry.ProjectNr; t.Placeholder == "" {
 							t.Placeholder = "Project-Nr."
 						}
 						t.CharLimit = 9
 						t.Width = 9
+					case 5:
+						t.Placeholder = "Description"
+						t.SetValue(entry.Description)
+						t.Width = 40
 					default:
 						t.Placeholder = "UNDEFINED FIELD"
 					}
@@ -366,10 +375,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				entry.Start, _ = time.Parse("15:04", readTextInputWithDefault(&m.textInputs[0]))
 				entry.End, _ = time.Parse("15:04", readTextInputWithDefault(&m.textInputs[1]))
 				entry.Pause, _ = time.ParseDuration(readTextInputWithDefault(&m.textInputs[2]))
-				entry.Description = readTextInputWithDefault(&m.textInputs[3])
-				trySettingCurrentSelectedProjectNr(&m)
+				entry.Location = readTextInputWithDefault(&m.textInputs[3])
 				entry.ProjectNr = readTextInputWithDefault(&m.textInputs[4])
 				entry.Project = m.projectNumbers[entry.ProjectNr].Name
+				entry.Description = readTextInputWithDefault(&m.textInputs[5])
+				trySettingCurrentSelectedProjectNr(&m)
 				slog.Info("Trying to set project information...", "entry", entry)
 			}
 			m.entryList.Entries[m.datepicker.currentDay.Month()-1][m.datepicker.currentDay.Day()-1][m.currentSelectedRow] = entry
@@ -446,14 +456,15 @@ func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
 
 func formatEntry(r RowEntry, columns []int) string {
 	// Format entry with dynamic column widths
-	format := fmt.Sprintf("%%-%ds  %%-%ds   %%-%ds %%-%ds   %%-%ds    %%-%ds",
-		columns[0], columns[1], columns[2], columns[3], columns[4], columns[5])
+	format := fmt.Sprintf("%%-%ds  %%-%ds   %%-%ds %%-%ds   %%-%ds    %%-%ds   %%-%ds",
+		columns[0], columns[1], columns[2], columns[3], columns[4], columns[5], columns[6])
 
 	return fmt.Sprintf(format,
 		r.Date.Format("Mon 02.01."),
 		r.Start.Format("15:04"),
 		r.End.Format("15:04"),
 		r.Pause.String(),
+		r.Location,
 		r.Project,
 		r.Description,
 	)
@@ -492,8 +503,9 @@ func (m Model) View() string {
 	startWidth := 0.12
 	endWidth := 0.12
 	pauseWidth := 0.15
-	projectWidth := 0.23
-	descWidth := 0.23
+	locationWidth := 0.10
+	projectWidth := 0.18
+	descWidth := 0.18
 
 	// Calculate actual column widths
 	columns := []int{
@@ -501,21 +513,24 @@ func (m Model) View() string {
 		int(float64(availableWidth) * startWidth),
 		int(float64(availableWidth) * endWidth),
 		int(float64(availableWidth) * pauseWidth),
+		int(float64(availableWidth) * locationWidth),
 		int(float64(availableWidth) * projectWidth),
 		int(float64(availableWidth) * descWidth),
 	}
+
+	m.debugMessage = fmt.Sprintf("Current width = %d, %v", availableWidth, columns)
 
 	s := ""
 	s += m.styles["header"].Render("Work Hour Editor")
 	s += "\n"
 	s += fmt.Sprintf("Current Date: [%s] \n", m.datepicker.currentDay.Format("Mon 02.01.06"))
-	s += fmt.Sprintf("\n")
+	s += "\n"
 
 	// Create header with dynamic widths
-	headerFormat := fmt.Sprintf(" %%-%ds  %%-%ds   %%-%ds %%-%ds   %%-%ds    %%-%ds",
-		columns[0], columns[1], columns[2], columns[3], columns[4], columns[5])
+	headerFormat := fmt.Sprintf(" %%-%ds  %%-%ds   %%-%ds %%-%ds   %%-%ds    %%-%ds   %%-%ds",
+		columns[0], columns[1], columns[2], columns[3], columns[4], columns[5], columns[6])
 	s += m.styles["tableHeader"].Render(
-		fmt.Sprintf(headerFormat, "Date", "Start", "End", "Pause", "Project", "Description"),
+		fmt.Sprintf(headerFormat, "Date", "Start", "End", "Pause", "Location", "Project", "Description"),
 	)
 	s += "\n"
 

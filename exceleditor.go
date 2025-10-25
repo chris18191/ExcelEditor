@@ -28,6 +28,7 @@ type RowEntry struct {
 	Vacation    time.Duration
 	Sickness    time.Duration
 	Note        string
+	Location    string
 	RawRow      []string
 	Styles      []excelize.Style
 	Formulas    []string
@@ -86,7 +87,7 @@ func ReadEntryFromRowAt(currentRow []string, sheet string, rowIdx, colIdx int) (
 	res.Date = excelDateToDate(currentRow[colIdx+0])
 
 	if len(currentRow) < 10 {
-		return RowEntry{}, errors.New(fmt.Sprintf("Not enough entries in the row: %s", currentRow))
+		return RowEntry{}, fmt.Errorf("not enough entries in the row: %s", currentRow)
 	}
 	res.Day = currentRow[colIdx+1]
 	if res.Day == "" {
@@ -117,7 +118,12 @@ func ReadEntryFromRowAt(currentRow []string, sheet string, rowIdx, colIdx int) (
 	if len(currentRow) <= colIdx+12 {
 		return res, nil
 	}
-	res.Note = currentRow[colIdx+12]
+	res.Location = currentRow[colIdx+12]
+	if len(currentRow) <= colIdx+13 {
+		return res, nil
+	}
+	res.Note = currentRow[colIdx+13]
+	slog.Info("Read location:")
 
 	// cellID := fmt.Sprintf("%c%d", rune(int(colIdx)+internalOffset), row)
 	// res.Date = time.Parse("02/01/2016", )
@@ -241,19 +247,28 @@ func WriteRowEntry(f *excelize.File, sheetname string, row int, entry RowEntry) 
 	}
 
 	// f.SetCellValue(sheetname, fmt.Sprintf("B%d", row), entry.Day)
-	// f.SetCellValue(sheetname, fmt.Sprintf("B%d", row), "Mo")
-	f.SetCellValue(sheetname, fmt.Sprintf("C%d", row), entry.Start.Format("15:04"))
-	// f.SetCellValue(sheetname, fmt.Sprintf("C%d", row), entry.Start.Format("15:04")+":00")
-	// f.SetCellValue(sheetname, fmt.Sprintf("C%d", row), timeToFloat(entry.Start))
-	// f.SetCellFloat(sheetname, fmt.Sprintf("D%d", row), timeToFloat(entry.End), 8, 64)
-	f.SetCellValue(sheetname, fmt.Sprintf("D%d", row), entry.End.Format("15:04"))
+	// Convert times to Excel's time format (float where 1.0 = 24 hours)
+	// Use exact calculation to avoid rounding errors
+	startTimeFloat := float64(entry.Start.Hour())/24.0 +
+		float64(entry.Start.Minute())/(24.0*60.0) +
+		float64(entry.Start.Second())/(24.0*60.0*60.0)
+
+	endTimeFloat := float64(entry.End.Hour())/24.0 +
+		float64(entry.End.Minute())/(24.0*60.0) +
+		float64(entry.End.Second())/(24.0*60.0*60.0)
+
+	// Set the time values as floats with high precision
+	f.SetCellFloat(sheetname, fmt.Sprintf("C%d", row), startTimeFloat, 15, 64)
+	f.SetCellFloat(sheetname, fmt.Sprintf("D%d", row), endTimeFloat, 15, 64)
 	// f.SetCellValue(sheetname, fmt.Sprintf("D%d", row), entry.End.Format("15:04")+":00")
+	f.SetCellValue(sheetname, fmt.Sprintf("M%d", row), entry.Location)
 	if entry.Pause > time.Duration(0) {
 		f.SetCellValue(sheetname, fmt.Sprintf("E%d", row), entry.Pause)
 	} else {
 		f.SetCellValue(sheetname, fmt.Sprintf("E%d", row), nil)
 	}
-	f.SetCellValue(sheetname, fmt.Sprintf("F%d", row), entry.ProjectNr)
+	f.SetCellValue(sheetname, fmt.Sprintf("G%d", row), entry.ProjectNr)
+	f.SetCellValue(sheetname, fmt.Sprintf("H%d", row), entry.Project)
 	f.SetCellValue(sheetname, fmt.Sprintf("I%d", row), entry.Description)
 	// d := entry.End.Sub(entry.Start) - entry.Pause
 	// hour := int(d.Hours())
