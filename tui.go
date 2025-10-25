@@ -348,8 +348,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if entry.Location != "" {
 							t.SetValue(entry.Location)
 						}
-						t.CharLimit = 5
-						t.Width = 5
+						t.Width = 8
 					case 4:
 						if t.Placeholder = entry.ProjectNr; t.Placeholder == "" {
 							t.Placeholder = "Project-Nr."

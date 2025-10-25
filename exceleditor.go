@@ -267,8 +267,8 @@ func WriteRowEntry(f *excelize.File, sheetname string, row int, entry RowEntry) 
 	} else {
 		f.SetCellValue(sheetname, fmt.Sprintf("E%d", row), nil)
 	}
-	f.SetCellValue(sheetname, fmt.Sprintf("G%d", row), entry.ProjectNr)
-	f.SetCellValue(sheetname, fmt.Sprintf("H%d", row), entry.Project)
+	f.SetCellValue(sheetname, fmt.Sprintf("F%d", row), entry.ProjectNr)
+	f.SetCellValue(sheetname, fmt.Sprintf("G%d", row), entry.Project)
 	f.SetCellValue(sheetname, fmt.Sprintf("I%d", row), entry.Description)
 	// d := entry.End.Sub(entry.Start) - entry.Pause
 	// hour := int(d.Hours())
