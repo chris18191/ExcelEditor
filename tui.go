@@ -149,6 +149,8 @@ func initialModel(config Configuration) Model {
 			"dailySum": lipgloss.NewStyle().
 				Bold(true).
 				Foreground(tint.BrightCyan()),
+			"debugMessage": lipgloss.NewStyle().
+				Foreground(tint.BrightBlack()),
 		},
 	}
 }
@@ -187,6 +189,9 @@ func validateDuration(s string) error {
 }
 
 func helperMod(a, b int) int {
+	if b <= 0 {
+		return 0
+	}
 	return (a + b) % b
 }
 
@@ -517,8 +522,6 @@ func (m Model) View() string {
 		int(float64(availableWidth) * descWidth),
 	}
 
-	m.debugMessage = fmt.Sprintf("Current width = %d, %v", availableWidth, columns)
-
 	s := ""
 	s += m.styles["header"].Render("Work Hour Editor")
 	s += "\n"
@@ -597,7 +600,7 @@ func (m Model) View() string {
 	s += m.styles["dailySum"].Render(fmt.Sprintf("Total hours: %02.0f:%02d", totalWorkDay.Hours(), int(totalWorkDay.Minutes())%60))
 
 	s += "\n\n"
-	s += "\n\n#######\nDebug: " + m.debugMessage + "\n#######\n\n"
+	s += m.styles["debugMessage"].Render(fmt.Sprintf("\n\nInfo: %s\n\n", m.debugMessage))
 
 	s += m.help.View(m.keys)
 	return s

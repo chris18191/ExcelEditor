@@ -68,7 +68,7 @@ func timeToFloat(time time.Time) float64 {
 }
 
 // func ReadEntryFromRowAt(f *excelize.File, sheet string, row int, col int) (RowEntry, error){
-func ReadEntryFromRowAt(currentRow []string, sheet string, rowIdx, colIdx int) (RowEntry, error) {
+func ReadEntryFromRowAt(f *excelize.File, currentRow []string, sheet string, rowIdx, colIdx int) (RowEntry, error) {
 
 	var res = RowEntry{}
 	res.SheetName = sheet
@@ -128,14 +128,20 @@ func ReadEntryFromRowAt(currentRow []string, sheet string, rowIdx, colIdx int) (
 	// cellID := fmt.Sprintf("%c%d", rune(int(colIdx)+internalOffset), row)
 	// res.Date = time.Parse("02/01/2016", )
 
+	// Read the formula from column G
+	formula, _ := f.GetCellFormula(sheet, fmt.Sprintf("G%d", rowIdx+2))
+	if formula != "" {
+		res.Formulas = append(res.Formulas, formula)
+	}
+
 	res.RawRow = currentRow
 
 	return res, nil
 }
 
 // func ReadEntryFromRow(f *excelize.File, sheet string, row int) (RowEntry, error){
-func ReadEntryFromRow(currentRow []string, sheet string, rowIdx int) (RowEntry, error) {
-	return ReadEntryFromRowAt(currentRow, sheet, rowIdx, 0)
+func ReadEntryFromRow(f *excelize.File, currentRow []string, sheet string, rowIdx int) (RowEntry, error) {
+	return ReadEntryFromRowAt(f, currentRow, sheet, rowIdx, 0)
 }
 
 func calcTimeFromFloat(date time.Time, f string) time.Time {
@@ -197,7 +203,7 @@ func ReturnMonth(month string, config Configuration) [][]RowEntry {
 
 	var rowEntries []RowEntry
 	for i, row := range rows[config.ROW_ID_ENTRY_START:] {
-		rowEntry, err := ReadEntryFromRow(row, sheetName, i)
+		rowEntry, err := ReadEntryFromRowAt(f, row, sheetName, i, 0)
 		// slog.Debug("Parsed row: ", "row", rowEntry, "error", err)
 		if err != nil {
 			slog.Debug("Error while parsing row: ", "row", rowEntry, "error", err)
@@ -218,6 +224,13 @@ func ReturnMonth(month string, config Configuration) [][]RowEntry {
 func WriteRowEntry(f *excelize.File, sheetname string, row int, entry RowEntry) {
 	// slog.Info("vvvvvvvv")
 	// defer slog.Info("^^^^^^^")
+
+	// Get the formula from column G if it exists
+	formula, _ := f.GetCellFormula(sheetname, fmt.Sprintf("G%d", row))
+	if formula != "" {
+		// Store the formula in the entry
+		entry.Formulas = append(entry.Formulas, formula)
+	}
 
 	// var res string
 	// res, _ = f.GetCellValue(sheetname, fmt.Sprintf("A%d", row))
@@ -268,7 +281,16 @@ func WriteRowEntry(f *excelize.File, sheetname string, row int, entry RowEntry) 
 		f.SetCellValue(sheetname, fmt.Sprintf("E%d", row), nil)
 	}
 	f.SetCellValue(sheetname, fmt.Sprintf("F%d", row), entry.ProjectNr)
-	f.SetCellValue(sheetname, fmt.Sprintf("G%d", row), entry.Project)
+
+	// Set the project value and formula
+	if len(entry.Formulas) > 0 {
+		// If we have a stored formula, use it
+		f.SetCellFormula(sheetname, fmt.Sprintf("G%d", row), entry.Formulas[0])
+	} else {
+		// Otherwise just set the value
+		f.SetCellValue(sheetname, fmt.Sprintf("G%d", row), entry.Project)
+	}
+
 	f.SetCellValue(sheetname, fmt.Sprintf("I%d", row), entry.Description)
 	// d := entry.End.Sub(entry.Start) - entry.Pause
 	// hour := int(d.Hours())
@@ -313,7 +335,14 @@ func WriteRowEntries(entries map[string][][]RowEntry, config Configuration) {
 				writtenDate = excelDateToDate(writtenDateStr)
 
 				if !writtenDate.Equal(entry.Date) || writtenDateStr == "" {
+					// Get the formula from the current row's column G before duplicating
+					formula, _ := f.GetCellFormula(sheetname, fmt.Sprintf("G%d", currentRowIndex))
 					f.DuplicateRow(sheetname, currentRowIndex)
+
+					// If there was a formula, set it in the duplicated row
+					if formula != "" {
+						entry.Formulas = append(entry.Formulas, formula)
+					}
 				}
 				// slog.Info("Writing line", "rowIndex", currentRowIndex, "writtenDay", writtenDate, "entryDate", entry.Date, "style", style)
 				currentRowIndex += 1
